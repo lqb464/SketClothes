@@ -6,6 +6,7 @@ venv/
 backend/.venv/
 *.pth
 *.pkl
+.env
 
 # Node
 node_modules/
@@ -19,6 +20,9 @@ models--*/
 training/outputs/
 backend/models/lora/
 backend/models/controlnet/
+
+# DATASET
+training/data/
 
 # IDE / OS
 .ipynb_checkpoints/
