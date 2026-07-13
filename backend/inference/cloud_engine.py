@@ -1,6 +1,7 @@
 """Cloud-based sketch-to-fashion generation engine."""
 import base64
 import io
+import os
 import logging
 from collections.abc import AsyncIterator
 from PIL import Image, ImageOps
@@ -149,6 +150,3 @@ class CloudEngine(InferenceEngine):
         b64_mock = self._bytes_to_b64(self._pil_to_bytes(bg))
         yield GenerationEvent(type="image", image_b64=b64_mock)
         yield GenerationEvent(type="status", message="Mô phỏng hoàn tất! Hãy cấu hình API keys để sử dụng thật.")
-
-
-import os

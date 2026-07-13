@@ -43,7 +43,7 @@ CONTROLNET_CONDITIONING_SCALE = float(
 SKETCH_PREPROCESS = os.getenv("SKETCH_PREPROCESS", "adaptive")  # adaptive | canny | none
 
 HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", "8000"))
+PORT = int(os.getenv("PORT", "8003"))
 
 NEGATIVE_PROMPT = os.getenv(
     "NEGATIVE_PROMPT",
