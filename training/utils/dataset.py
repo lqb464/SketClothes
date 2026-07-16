@@ -25,10 +25,25 @@ def load_hf_dataset(
 
     # Always check local data folder first
     data_dir = Path(__file__).resolve().parents[1] / "data"
+    if dataset_id and Path(dataset_id).exists() and Path(dataset_id).is_dir():
+        data_dir = Path(dataset_id)
+        
     photos_dir = data_dir / "png" / "photos"
+    if not photos_dir.exists():
+        photos_dir = data_dir / "photos"
+        
     sketches_dir = data_dir / "png" / "sketches"
+    if not sketches_dir.exists():
+        sketches_dir = data_dir / "sketches"
+    
+    # Robust fallback checks for captions
     captions_file = data_dir / "png" / "captions.json"
+    if not captions_file.exists():
+        captions_file = data_dir / "captions.json"
+        
     captions_dir = data_dir / "png" / "captions"
+    if not captions_dir.exists():
+        captions_dir = data_dir / "captions"
 
     # Support png, jpg, jpeg
     image_paths = []
@@ -66,14 +81,14 @@ def load_hf_dataset(
                     # Try exact filename matching
                     sketch_path = sketches_dir / img_path.name
 
-                if sketch_path.exists():
-                    try:
-                        sketch = Image.open(sketch_path).convert("RGB")
-                    except Exception as e:
-                        print(f"Error reading sketch {sketch_path}: {e}")
-                        sketch = Image.new("RGB", image.size, (255, 255, 255))
-                else:
-                    sketch = Image.new("RGB", image.size, (255, 255, 255))
+                # Skip unpaired photos — blank white "sketches" teach ControlNet to ignore lines.
+                if not sketch_path.exists():
+                    continue
+                try:
+                    sketch = Image.open(sketch_path).convert("RGB")
+                except Exception as e:
+                    print(f"Error reading sketch {sketch_path}: {e}")
+                    continue
 
                 # Lookup caption (by exact filename, stem, or .txt file)
                 text = captions_dict.get(img_path.name, captions_dict.get(img_path.stem, ""))
@@ -99,7 +114,9 @@ def load_hf_dataset(
     # 2. Fallback to parquet loading if local png/photos folder is empty or non-existent
     parquet_dir = data_dir / "parquet" / "white-background"
     if not parquet_dir.exists():
-        raise FileNotFoundError(f"Neither photos directory ({photos_dir}) nor Parquet directory ({parquet_dir}) found.")
+        parquet_dir = data_dir / "parquet"
+    if not parquet_dir.exists():
+        raise FileNotFoundError(f"Neither photos directory ({photos_dir}) nor Parquet directory ({data_dir / 'parquet' / 'white-background'}) found.")
 
     parquet_files = sorted(parquet_dir.glob("*.parquet"))
     if not parquet_files:
@@ -127,15 +144,28 @@ def load_hf_dataset(
                 print(f"Error reading image at index {idx}: {e}")
                 continue
 
-            sketch_path = sketches_dir / f"{idx:06d}.png"
-            if sketch_path.exists():
-                try:
-                    sketch = Image.open(sketch_path).convert("RGB")
-                except Exception as e:
-                    print(f"Error reading sketch at {sketch_path}: {e}")
-                    sketch = Image.new("RGB", image.size, (255, 255, 255))
-            else:
-                sketch = Image.new("RGB", image.size, (255, 255, 255))
+            # Prefer an explicit id/filename column when present; fall back to row order.
+            sketch_name = None
+            for key in ("id", "image_id", "filename", "file_name", "name"):
+                if key in row and row[key] is not None and str(row[key]).strip():
+                    sketch_name = Path(str(row[key])).stem
+                    break
+            if sketch_name is None:
+                sketch_name = f"{int(idx):06d}"
+
+            sketch_path = sketches_dir / f"{sketch_name}.png"
+            if not sketch_path.exists():
+                # Common alternate: zero-padded index from original dataframe order
+                alt = sketches_dir / f"{int(idx):06d}.png"
+                sketch_path = alt if alt.exists() else sketch_path
+
+            if not sketch_path.exists():
+                continue
+            try:
+                sketch = Image.open(sketch_path).convert("RGB")
+            except Exception as e:
+                print(f"Error reading sketch at {sketch_path}: {e}")
+                continue
 
             text = row.get("text", "")
             if not text:
@@ -165,25 +195,29 @@ class DresscodeDataset(Dataset):
     ) -> None:
         self.data = hf_dataset
         self.tokenizer = tokenizer
+        self.resolution = resolution
+        self.center_crop = center_crop
+        self.random_flip = random_flip
         self.with_control = with_control
 
-        self.image_transforms = transforms.Compose(
+        # Shared geometry: resize (+ optional center crop). Flip is applied jointly
+        # so photo and sketch stay spatially aligned for ControlNet.
+        self._resize_crop = transforms.Compose(
             [
                 transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BILINEAR),
                 transforms.CenterCrop(resolution) if center_crop else transforms.Lambda(lambda x: x),
-                transforms.RandomHorizontalFlip() if random_flip else transforms.Lambda(lambda x: x),
+            ]
+        )
+        # Target photo → VAE: [-1, 1]
+        self._to_model_input = transforms.Compose(
+            [
                 transforms.ToTensor(),
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
-        self.control_transforms = transforms.Compose(
-            [
-                transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BILINEAR),
-                transforms.CenterCrop(resolution) if center_crop else transforms.Lambda(lambda x: x),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
+        # ControlNet cond must stay in [0, 1] — matches StableDiffusionControlNetPipeline
+        # (control_image_processor uses do_normalize=False). Do NOT Normalize here.
+        self._to_control_input = transforms.ToTensor()
 
     def __len__(self) -> int:
         return len(self.data)
@@ -203,7 +237,18 @@ class DresscodeDataset(Dataset):
         image: Image.Image = row["image"].convert("RGB")
         caption: str = row["text"]
 
-        pixel_values = self.image_transforms(image)
+        image = self._resize_crop(image)
+        sketch: Image.Image | None = None
+        if self.with_control:
+            sketch = self._resize_crop(row["sketch"].convert("RGB"))
+
+        # Same random flip for image + sketch (critical for spatial conditioning).
+        if self.random_flip and random.random() < 0.5:
+            image = transforms.functional.hflip(image)
+            if sketch is not None:
+                sketch = transforms.functional.hflip(sketch)
+
+        pixel_values = self._to_model_input(image)
         input_ids = self._tokenize(caption)
 
         sample = {
@@ -212,10 +257,8 @@ class DresscodeDataset(Dataset):
             "caption": caption,
         }
 
-        if self.with_control:
-            sketch: Image.Image = row["sketch"].convert("RGB")
-            control_values = self.control_transforms(sketch)
-            sample["control_values"] = control_values
+        if self.with_control and sketch is not None:
+            sample["control_values"] = self._to_control_input(sketch)
 
         return sample
 
