@@ -48,13 +48,22 @@ class CPUEngine(InferenceEngine):
         self._cancel_flags[request_id] = True
 
     async def generate(
-        self, sketch: Image.Image, prompt: str, request_id: str
+        self,
+        sketch: Image.Image,
+        prompt: str,
+        request_id: str,
+        conditioning_scale: float | None = None,
     ) -> AsyncIterator[GenerationEvent]:
         if not self._loaded or self._pipe is None:
             await self.load()
 
         self._cancel_flags[request_id] = False
         control_image = preprocess_sketch(sketch, size=config.RESOLUTION)
+        scale = (
+            conditioning_scale
+            if conditioning_scale is not None
+            else config.CONTROLNET_CONDITIONING_SCALE
+        )
 
         yield GenerationEvent(type="progress", message="Generating on CPU (may take 30-90s)...")
         print(f"[INFO] Generating image (CPU, {config.RESOLUTION}px)...")
@@ -68,7 +77,7 @@ class CPUEngine(InferenceEngine):
                 image=control_image,
                 num_inference_steps=config.NUM_INFERENCE_STEPS,
                 guidance_scale=config.GUIDANCE_SCALE,
-                controlnet_conditioning_scale=config.CONTROLNET_CONDITIONING_SCALE,
+                controlnet_conditioning_scale=scale,
             )
             return result.images[0]
 

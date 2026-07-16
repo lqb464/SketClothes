@@ -1,5 +1,3 @@
-export type FashionCategory = "shirt" | "pants" | "hat" | "dress" | "jacket";
-
 export interface HealthInfo {
   status: string;
   device: string;
@@ -15,11 +13,3 @@ export interface StreamMessage {
   step?: number;
   message?: string;
 }
-
-export const CATEGORY_OPTIONS: { id: FashionCategory; label: string }[] = [
-  { id: "shirt", label: "Áo" },
-  { id: "pants", label: "Quần" },
-  { id: "hat", label: "Nón" },
-  { id: "dress", label: "Váy" },
-  { id: "jacket", label: "Áo khoác" },
-];

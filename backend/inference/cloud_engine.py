@@ -46,7 +46,11 @@ class CloudEngine(InferenceEngine):
         return base64.b64encode(img_bytes).decode("utf-8")
 
     async def generate(
-        self, sketch: Image.Image, prompt: str, request_id: str
+        self,
+        sketch: Image.Image,
+        prompt: str,
+        request_id: str,
+        conditioning_scale: float | None = None,
     ) -> AsyncIterator[GenerationEvent]:
         yield GenerationEvent(type="status", message="Gửi dữ liệu lên Cloud API...")
 

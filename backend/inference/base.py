@@ -35,7 +35,11 @@ class InferenceEngine(ABC):
 
     @abstractmethod
     async def generate(
-        self, sketch: Image.Image, prompt: str, request_id: str
+        self,
+        sketch: Image.Image,
+        prompt: str,
+        request_id: str,
+        conditioning_scale: float | None = None,
     ) -> AsyncIterator[GenerationEvent]:
         pass
 

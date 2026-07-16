@@ -45,13 +45,22 @@ class DiffusersGPUEngine(InferenceEngine):
         self._cancel_flags[request_id] = True
 
     async def generate(
-        self, sketch: Image.Image, prompt: str, request_id: str
+        self,
+        sketch: Image.Image,
+        prompt: str,
+        request_id: str,
+        conditioning_scale: float | None = None,
     ) -> AsyncIterator[GenerationEvent]:
         if not self._loaded or self._pipe is None:
             await self.load()
 
         self._cancel_flags[request_id] = False
         control_image = preprocess_sketch(sketch, size=config.RESOLUTION)
+        scale = (
+            conditioning_scale
+            if conditioning_scale is not None
+            else config.CONTROLNET_CONDITIONING_SCALE
+        )
         frames: asyncio.Queue[GenerationEvent | None] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
@@ -84,7 +93,7 @@ class DiffusersGPUEngine(InferenceEngine):
                     image=control_image,
                     num_inference_steps=config.NUM_INFERENCE_STEPS,
                     guidance_scale=config.GUIDANCE_SCALE,
-                    controlnet_conditioning_scale=config.CONTROLNET_CONDITIONING_SCALE,
+                    controlnet_conditioning_scale=scale,
                     callback_on_step_end=_callback,
                 )
                 return result.images[0]

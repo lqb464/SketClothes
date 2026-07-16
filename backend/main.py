@@ -85,6 +85,7 @@ class GenerateRequest(BaseModel):
     sketch: str  # base64 encoded image
     category: str = "shirt"
     style: str = ""
+    conditioning_scale: float | None = None
 
 
 @app.get("/api/models/status")
@@ -106,7 +107,7 @@ async def http_generate(body: GenerateRequest):
         if is_blank_sketch(sketch):
             raise HTTPException(status_code=400, detail="Sketch trống — hãy vẽ trước khi sinh ảnh")
 
-        prompt = build_prompt(body.category, body.style)
+        prompt = build_prompt(body.style)
 
         async with load_lock:
             if not engine.is_loaded:
@@ -116,7 +117,12 @@ async def http_generate(body: GenerateRequest):
         final_image_b64 = None
 
         # Iterate over generation events to find the final image
-        async for event in engine.generate(sketch, prompt, request_id):
+        async for event in engine.generate(
+            sketch,
+            prompt,
+            request_id,
+            conditioning_scale=body.conditioning_scale,
+        ):
             if event.type == "image":
                 final_image_b64 = event.image_b64
 
@@ -165,9 +171,10 @@ async def ws_generate(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "message": "Missing sketch data"})
                 continue
 
-            category = data.get("category", "shirt")
             style = data.get("style", "")
             request_id = data.get("request_id") or str(uuid.uuid4())
+            raw_scale = data.get("conditioning_scale")
+            conditioning_scale = float(raw_scale) if raw_scale is not None else None
 
             if active_request_id and active_request_id != request_id:
                 await engine.cancel(active_request_id)
@@ -183,7 +190,7 @@ async def ws_generate(websocket: WebSocket):
                     )
                     continue
 
-                prompt = build_prompt(category, style)
+                prompt = build_prompt(style)
 
                 async with load_lock:
                     if not engine.is_loaded:
@@ -197,7 +204,12 @@ async def ws_generate(websocket: WebSocket):
                             break
                         await engine.load()
 
-                async for event in engine.generate(sketch, prompt, request_id):
+                async for event in engine.generate(
+                    sketch,
+                    prompt,
+                    request_id,
+                    conditioning_scale=conditioning_scale,
+                ):
                     if active_request_id != request_id:
                         break
                     if not await safe_send_json(websocket, event_to_dict(event)):
@@ -214,6 +226,31 @@ async def ws_generate(websocket: WebSocket):
         if active_request_id:
             await engine.cancel(active_request_id)
             active_request_id = None
+
+
+# Mount standalone built Vite frontend (`frontend/dist`) if available
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, RedirectResponse
+
+FRONTEND_DIST_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if FRONTEND_DIST_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_DIR / "assets")), name="assets")
+
+    @app.get("/")
+    async def serve_root():
+        return FileResponse(FRONTEND_DIST_DIR / "index.html")
+
+    @app.get("/{full_path:path}")
+    async def catch_all_spa(full_path: str):
+        file_path = FRONTEND_DIST_DIR / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(FRONTEND_DIST_DIR / "index.html")
+else:
+    @app.get("/")
+    async def serve_root_fallback():
+        return {"status": "ok", "message": "SketClothes API running. Build frontend/dist for UI."}
 
 
 if __name__ == "__main__":

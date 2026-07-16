@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { floodFill, isCanvasBlank } from "../utils/canvasUtils";
+import { isCanvasBlank } from "../utils/canvasUtils";
 
-export type Tool = "pen" | "eraser" | "fill";
+export type Tool = "pen" | "eraser";
 
 interface SketchCanvasProps {
   onSketchChange: (dataUrl: string | null) => void;
@@ -10,21 +10,7 @@ interface SketchCanvasProps {
 }
 
 const MAX_UNDO = 20;
-
-export const PALETTE = [
-  "#000000",
-  "#ffffff",
-  "#e53935",
-  "#1e88e5",
-  "#43a047",
-  "#fdd835",
-  "#fb8c00",
-  "#8e24aa",
-  "#795548",
-  "#546e7a",
-  "#ec407a",
-  "#26c6da",
-] as const;
+const INK = "#111111";
 
 export default function SketchCanvas({
   onSketchChange,
@@ -33,8 +19,7 @@ export default function SketchCanvas({
 }: SketchCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [tool, setTool] = useState<Tool>("pen");
-  const [color, setColor] = useState<string>(PALETTE[0]);
-  const [penSize, setPenSize] = useState(4);
+  const [penSize, setPenSize] = useState(3);
   const [isDrawing, setIsDrawing] = useState(false);
   const undoStack = useRef<ImageData[]>([]);
 
@@ -51,7 +36,8 @@ export default function SketchCanvas({
     ctx.fillRect(0, 0, width, height);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    undoStack.current = [ctx.getImageData(0, 0, width, height)];
+    // Snapshots are states *before* each stroke; undo pops & restores that state.
+    undoStack.current = [];
   }, [getContext, width, height]);
 
   useEffect(() => {
@@ -62,7 +48,7 @@ export default function SketchCanvas({
     const ctx = getContext();
     if (!ctx) return;
     const snapshot = ctx.getImageData(0, 0, width, height);
-    undoStack.current = [...undoStack.current.slice(-MAX_UNDO + 1), snapshot];
+    undoStack.current = [...undoStack.current.slice(-(MAX_UNDO - 1)), snapshot];
   }, [getContext, width, height]);
 
   const exportSketch = useCallback(() => {
@@ -83,20 +69,22 @@ export default function SketchCanvas({
   const getPoint = (event: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    // Use content box (exclude CSS border) so ink lands under the crosshair.
+    const scaleX = canvas.width / canvas.clientWidth;
+    const scaleY = canvas.height / canvas.clientHeight;
 
-    if ("touches" in event) {
-      const touch = event.touches[0] ?? event.changedTouches[0];
-      return {
-        x: (touch.clientX - rect.left) * scaleX,
-        y: (touch.clientY - rect.top) * scaleY,
-      };
-    }
+    const clientX =
+      "touches" in event
+        ? (event.touches[0] ?? event.changedTouches[0]).clientX
+        : event.clientX;
+    const clientY =
+      "touches" in event
+        ? (event.touches[0] ?? event.changedTouches[0]).clientY
+        : event.clientY;
 
     return {
-      x: (event.clientX - rect.left) * scaleX,
-      y: (event.clientY - rect.top) * scaleY,
+      x: (clientX - rect.left - canvas.clientLeft) * scaleX,
+      y: (clientY - rect.top - canvas.clientTop) * scaleY,
     };
   };
 
@@ -106,13 +94,6 @@ export default function SketchCanvas({
     if (!ctx) return;
     const { x, y } = getPoint(event);
 
-    if (tool === "fill") {
-      pushUndo();
-      floodFill(ctx, x, y, color, width, height);
-      exportSketch();
-      return;
-    }
-
     pushUndo();
     setIsDrawing(true);
     ctx.beginPath();
@@ -120,12 +101,12 @@ export default function SketchCanvas({
   };
 
   const handlePointerMove = (event: React.MouseEvent | React.TouchEvent) => {
-    if (!isDrawing || tool === "fill") return;
+    if (!isDrawing) return;
     event.preventDefault();
     const ctx = getContext();
     if (!ctx) return;
     const { x, y } = getPoint(event);
-    ctx.strokeStyle = tool === "eraser" ? "#ffffff" : color;
+    ctx.strokeStyle = tool === "eraser" ? "#ffffff" : INK;
     ctx.lineWidth = tool === "pen" ? penSize : penSize * 3;
     ctx.lineTo(x, y);
     ctx.stroke();
@@ -134,26 +115,25 @@ export default function SketchCanvas({
   };
 
   const handlePointerUp = () => {
-    if (!isDrawing || tool === "fill") return;
+    if (!isDrawing) return;
     setIsDrawing(false);
     exportSketch();
   };
 
   const handleUndo = () => {
     const ctx = getContext();
-    if (!ctx || undoStack.current.length <= 1) return;
-    undoStack.current.pop();
-    const prev = undoStack.current[undoStack.current.length - 1];
+    if (!ctx || undoStack.current.length === 0) return;
+    const prev = undoStack.current.pop();
+    if (!prev) return;
     ctx.putImageData(prev, 0, 0);
     exportSketch();
   };
 
-  const cursorClass =
-    tool === "fill" ? "canvas-fill" : tool === "eraser" ? "canvas-eraser" : "canvas-pen";
+  const cursorClass = tool === "eraser" ? "canvas-eraser" : "canvas-pen";
 
   return (
     <div className="sketch-canvas">
-      <div className="panel-controls">
+      <div className="panel-controls sketch-toolbar">
         <div className="controls-row">
           <div className="controls-row-primary toolbar-tools">
             <button
@@ -161,14 +141,7 @@ export default function SketchCanvas({
               className={tool === "pen" ? "active" : ""}
               onClick={() => setTool("pen")}
             >
-              Bút
-            </button>
-            <button
-              type="button"
-              className={tool === "fill" ? "active" : ""}
-              onClick={() => setTool("fill")}
-            >
-              Tô màu
+              Bút mực
             </button>
             <button
               type="button"
@@ -178,56 +151,41 @@ export default function SketchCanvas({
               Tẩy
             </button>
             <label className="pen-size">
-              Cỡ nét
+              Nét
               <input
                 type="range"
                 min={2}
-                max={20}
+                max={12}
                 value={penSize}
                 onChange={(e) => setPenSize(Number(e.target.value))}
-                disabled={tool === "fill"}
               />
               <span>{penSize}px</span>
             </label>
           </div>
           <div className="controls-row-actions">
-            <button type="button" onClick={handleUndo}>
+            <button
+              type="button"
+              className="btn-undo"
+              onClick={handleUndo}
+              title="Hoàn tác nét vừa vẽ"
+            >
+              <span className="btn-icon" aria-hidden>
+                ↺
+              </span>
               Hoàn tác
             </button>
-            <button type="button" onClick={handleClear}>
-              Xóa hết
+            <button
+              type="button"
+              className="btn-clear"
+              onClick={handleClear}
+              title="Xóa toàn bộ canvas"
+            >
+              <span className="btn-icon" aria-hidden>
+                ⌫
+              </span>
+              Xóa
             </button>
           </div>
-        </div>
-
-        <div className="color-palette">
-          {PALETTE.map((swatch) => (
-            <button
-              key={swatch}
-              type="button"
-              className={`swatch${color === swatch ? " selected" : ""}${
-                swatch === "#ffffff" ? " swatch-white" : ""
-              }`}
-              style={{ backgroundColor: swatch }}
-              title={swatch}
-              onClick={() => {
-                setColor(swatch);
-                if (tool === "eraser") setTool("pen");
-              }}
-            />
-          ))}
-          <label className="custom-color" title="Chọn màu tuỳ ý">
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => {
-                setColor(e.target.value);
-                if (tool === "eraser") setTool("pen");
-              }}
-            />
-            <span>+</span>
-          </label>
-          <span className="current-color" style={{ backgroundColor: color }} />
         </div>
       </div>
 
@@ -245,12 +203,6 @@ export default function SketchCanvas({
           onTouchMove={handlePointerMove}
           onTouchEnd={handlePointerUp}
         />
-      </div>
-
-      <div className="panel-footer">
-        <p className="hint">
-          Bút màu / tô vùng như Paint — xong thì nhấn Tạo ảnh bên phải
-        </p>
       </div>
     </div>
   );

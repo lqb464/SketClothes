@@ -1,17 +1,27 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import FashionControls from "./components/FashionControls";
 import PreviewPanel from "./components/PreviewPanel";
 import SketchCanvas from "./components/SketchCanvas";
 import { useSketchStream } from "./hooks/useSketchStream";
-import { FashionCategory } from "./types";
 
 export default function App() {
-  const [category, setCategory] = useState<FashionCategory>("shirt");
   const [style, setStyle] = useState("");
+  const [adherence, setAdherence] = useState(0.6);
+  const [liveMode, setLiveMode] = useState(false);
+  const [sketchDataUrl, setSketchDataUrl] = useState<string | null>(null);
 
   const { health, imageSrc, loading, hasSketch, statusMessage, step, updateSketch, generate } =
-    useSketchStream({ category, style });
+    useSketchStream({ style, adherence, liveMode });
 
-  const isStreaming = health?.streaming ?? false;
+  const handleSketchChange = useCallback(
+    (dataUrl: string | null) => {
+      setSketchDataUrl(dataUrl);
+      updateSketch(dataUrl);
+    },
+    [updateSketch]
+  );
+
+  const deviceStreaming = health?.streaming ?? false;
   const deviceLabel =
     health?.device === "cuda" ? "GPU" : health ? "CPU" : "Offline";
 
@@ -19,50 +29,51 @@ export default function App() {
     <div className="app">
       <header className="header">
         <div>
-          <h1>Sketch-to-Fashion</h1>
-          <p>Vẽ sketch tay → nhấn Tạo ảnh để sinh trang phục</p>
+          <p className="brand">SketClothes</p>
+          <h1>Sketch → Fashion</h1>
         </div>
         <div className="badges">
           <span className={`badge device-${health?.device ?? "unknown"}`}>
             {deviceLabel}
             {health?.resolution ? ` · ${health.resolution}px` : ""}
           </span>
-          {isStreaming && <span className="badge mode">Streaming</span>}
-          {health && !health.streaming && (
-            <span className="badge warn">Chậm (~30-90s)</span>
+          {liveMode && <span className="badge mode">Live draw</span>}
+          {deviceStreaming && <span className="badge mode">Frame stream</span>}
+          {health && !deviceStreaming && (
+            <span className="badge warn">Chậm (~30–90s)</span>
           )}
         </div>
       </header>
 
+      <FashionControls
+        style={style}
+        adherence={adherence}
+        liveMode={liveMode}
+        onStyleChange={setStyle}
+        onAdherenceChange={setAdherence}
+        onLiveModeChange={setLiveMode}
+        onGenerate={generate}
+        loading={loading}
+        hasSketch={hasSketch}
+      />
+
       <main className="workspace">
         <section className="panel sketch-panel">
-          <h2>Sketch của bạn</h2>
-          <SketchCanvas onSketchChange={updateSketch} />
+          <h2>Sketch</h2>
+          <SketchCanvas onSketchChange={handleSketchChange} />
         </section>
         <section className="panel preview-panel-wrap">
-          <h2>Ảnh sinh ra</h2>
+          <h2>Kết quả</h2>
           <PreviewPanel
             imageSrc={imageSrc}
+            sketchDataUrl={sketchDataUrl}
             loading={loading}
-            hasSketch={hasSketch}
             statusMessage={statusMessage}
-            streaming={isStreaming}
+            streaming={deviceStreaming}
             step={step}
-            category={category}
-            style={style}
-            onCategoryChange={setCategory}
-            onStyleChange={setStyle}
-            onGenerate={generate}
           />
         </section>
       </main>
-
-      <footer className="footer">
-        <p>
-          Model: Stable Diffusion 1.5 + ControlNet Scribble
-          {health?.resolution ? ` · ${health.resolution}px` : ""}
-        </p>
-      </footer>
     </div>
   );
 }

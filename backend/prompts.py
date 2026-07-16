@@ -1,23 +1,19 @@
 """Build text prompts for garment generation (FashionSD-X style)."""
 
-TEMPLATES: dict[str, str] = {
-    "shirt": "{style} shirt, fashion garment, product photo, white background",
-    "pants": "{style} pants, fashion garment, product photo, white background",
-    "hat": "{style} hat, fashion accessory, product photo, white background",
-    "dress": "{style} dress, fashion garment, product photo, white background",
-    "jacket": "{style} jacket, fashion garment, product photo, white background",
-}
+DEFAULT_STYLE = (
+    "isolated fashion garment, product photo, ghost mannequin, "
+    "clean pure white background, no person"
+)
 
-CATEGORY_DEFAULTS: dict[str, str] = {
-    "shirt": "a stylish",
-    "pants": "a pair of stylish",
-    "hat": "a stylish",
-    "dress": "a beautiful",
-    "jacket": "a stylish",
-}
+PROMPT_TEMPLATE = (
+    "{style}, fashion garment product photo, flat lay or ghost mannequin, "
+    "isolated on pure white background, studio e-commerce catalog, "
+    "no person, no model, no face, no hands"
+)
 
 
-def build_prompt(category: str, style: str = "") -> str:
-    template = TEMPLATES.get(category, TEMPLATES["shirt"])
-    style_text = style.strip() if style.strip() else CATEGORY_DEFAULTS.get(category, "a stylish")
-    return template.format(style=style_text)
+def build_prompt(style: str = "", category: str | None = None) -> str:
+    """Build prompt from free-text style. `category` is ignored (kept for API compat)."""
+    _ = category
+    style_text = style.strip() if style.strip() else DEFAULT_STYLE
+    return PROMPT_TEMPLATE.format(style=style_text)

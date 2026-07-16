@@ -97,13 +97,16 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8001
 
 ## Pix2Pix side track
 
+Branched after shared dataset prep (`c322383`, after `f3c34dd`):
+
 ```bash
 git checkout experiment/pix2pix
-cd training/pix2pix
-python train_pix2pix.py --help
+cd training
+python train_pix2pix.py --output_dir outputs/pix2pix
 ```
 
-See `training/pix2pix/README.md` on that branch.
+Files on that branch: `training/train_pix2pix.py`, `training/pix2pix_networks.py`.
+
 
 ## File map
 

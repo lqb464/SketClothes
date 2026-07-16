@@ -10,6 +10,8 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
+from utils.caption_utils import DEFAULT_PRODUCT_CAPTION, normalize_product_caption
+
 
 def load_hf_dataset(
     dataset_id: str = "",
@@ -65,7 +67,7 @@ def load_hf_dataset(
             except Exception as e:
                 print(f"Warning: could not read {captions_file}: {e}")
 
-        default_prompt = "a high quality fashion garment photo, clean white background"
+        default_prompt = DEFAULT_PRODUCT_CAPTION
 
         def local_gen():
             for img_path in image_paths:
@@ -102,6 +104,7 @@ def load_hf_dataset(
 
                 if not text:
                     text = default_prompt
+                text = normalize_product_caption(text)
 
                 yield {
                     "image": image,
@@ -169,7 +172,8 @@ def load_hf_dataset(
 
             text = row.get("text", "")
             if not text:
-                text = "a high quality fashion garment photo, clean white background"
+                text = DEFAULT_PRODUCT_CAPTION
+            text = normalize_product_caption(text)
 
             yield {
                 "image": image,

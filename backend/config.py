@@ -47,5 +47,9 @@ PORT = int(os.getenv("PORT", "8003"))
 
 NEGATIVE_PROMPT = os.getenv(
     "NEGATIVE_PROMPT",
-    "low quality, blurry, distorted, deformed, ugly, bad anatomy, watermark, text, person, human, model wearing",
+    (
+        "person, human, man, woman, girl, boy, child, face, hands, arms, legs, body, "
+        "model, posing, runway, street, room, furniture, mannequin head, "
+        "low quality, blurry, distorted, deformed, ugly, bad anatomy, watermark, text"
+    ),
 )

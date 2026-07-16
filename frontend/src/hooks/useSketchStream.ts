@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FashionCategory, HealthInfo, StreamMessage } from "../types";
+import { HealthInfo, StreamMessage } from "../types";
 
 const WS_URL =
   import.meta.env.VITE_WS_URL ||
   `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws/generate`;
 
+const LIVE_DEBOUNCE_MS = 700;
+
 interface UseSketchStreamOptions {
-  category: FashionCategory;
   style: string;
+  adherence: number;
+  liveMode: boolean;
 }
 
-export function useSketchStream({ category, style }: UseSketchStreamOptions) {
+export function useSketchStream({ style, adherence, liveMode }: UseSketchStreamOptions) {
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -20,6 +23,7 @@ export function useSketchStream({ category, style }: UseSketchStreamOptions) {
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
+  const liveTimerRef = useRef<number | null>(null);
   const intentionalCloseRef = useRef(false);
 
   const requestIdRef = useRef<string>("");
@@ -27,10 +31,19 @@ export function useSketchStream({ category, style }: UseSketchStreamOptions) {
   const queuedSketchRef = useRef<string | null>(null);
   const isGeneratingRef = useRef(false);
 
-  const categoryRef = useRef(category);
   const styleRef = useRef(style);
-  categoryRef.current = category;
+  const adherenceRef = useRef(adherence);
+  const liveModeRef = useRef(liveMode);
   styleRef.current = style;
+  adherenceRef.current = adherence;
+  liveModeRef.current = liveMode;
+
+  const idleStatus = useCallback((has: boolean) => {
+    if (liveModeRef.current) {
+      return has ? "Live — vẽ tiếp để cập nhật ảnh" : "Live — vẽ sketch để tự sinh ảnh";
+    }
+    return has ? "Sẵn sàng — nhấn Tạo ảnh" : "Vẽ sketch rồi nhấn Tạo ảnh";
+  }, []);
 
   const fetchHealth = useCallback(async () => {
     try {
@@ -40,6 +53,18 @@ export function useSketchStream({ category, style }: UseSketchStreamOptions) {
       setHealth(null);
     }
   }, []);
+
+  const payload = useCallback(
+    (sketch: string, requestId: string) =>
+      JSON.stringify({
+        type: "generate",
+        sketch,
+        style: styleRef.current,
+        conditioning_scale: adherenceRef.current,
+        request_id: requestId,
+      }),
+    []
+  );
 
   const flushQueued = useCallback(() => {
     const next = queuedSketchRef.current;
@@ -56,47 +81,36 @@ export function useSketchStream({ category, style }: UseSketchStreamOptions) {
     isGeneratingRef.current = true;
     setLoading(true);
     setStatusMessage("Đang sinh ảnh...");
+    ws.send(payload(next, requestIdRef.current));
+  }, [payload]);
 
-    ws.send(
-      JSON.stringify({
-        type: "generate",
-        sketch: next,
-        category: categoryRef.current,
-        style: styleRef.current,
-        request_id: requestIdRef.current,
-      })
-    );
-  }, []);
+  const sendGenerate = useCallback(
+    (sketch: string) => {
+      if (isGeneratingRef.current) {
+        queuedSketchRef.current = sketch;
+        setStatusMessage(
+          liveModeRef.current
+            ? "Đang sinh — sẽ dùng bản sketch mới nhất"
+            : "Đang sinh ảnh — sẽ cập nhật sau khi xong"
+        );
+        return;
+      }
 
-  const sendGenerate = useCallback((sketch: string) => {
-    if (isGeneratingRef.current) {
-      queuedSketchRef.current = sketch;
-      setStatusMessage("Đang sinh ảnh — sẽ cập nhật sau khi xong");
-      return;
-    }
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        queuedSketchRef.current = sketch;
+        setStatusMessage("Đang kết nối server...");
+        return;
+      }
 
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      queuedSketchRef.current = sketch;
-      setStatusMessage("Đang kết nối server...");
-      return;
-    }
-
-    requestIdRef.current = crypto.randomUUID();
-    isGeneratingRef.current = true;
-    setLoading(true);
-    setStatusMessage("Đang sinh ảnh...");
-
-    ws.send(
-      JSON.stringify({
-        type: "generate",
-        sketch,
-        category: categoryRef.current,
-        style: styleRef.current,
-        request_id: requestIdRef.current,
-      })
-    );
-  }, []);
+      requestIdRef.current = crypto.randomUUID();
+      isGeneratingRef.current = true;
+      setLoading(true);
+      setStatusMessage("Đang sinh ảnh...");
+      ws.send(payload(sketch, requestIdRef.current));
+    },
+    [payload]
+  );
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -110,11 +124,7 @@ export function useSketchStream({ category, style }: UseSketchStreamOptions) {
       if (queuedSketchRef.current) {
         flushQueued();
       } else if (!isGeneratingRef.current) {
-        setStatusMessage(
-          latestSketchRef.current
-            ? "Sẵn sàng — nhấn Tạo ảnh"
-            : "Vẽ sketch rồi nhấn Tạo ảnh"
-        );
+        setStatusMessage(idleStatus(Boolean(latestSketchRef.current)));
       }
     };
 
@@ -140,7 +150,7 @@ export function useSketchStream({ category, style }: UseSketchStreamOptions) {
         setLoading(false);
         setStep(undefined);
         isGeneratingRef.current = false;
-        setStatusMessage("Sinh ảnh xong!");
+        setStatusMessage(liveModeRef.current ? "Đã cập nhật — vẽ tiếp nếu muốn" : "Sinh ảnh xong!");
         if (queuedSketchRef.current) {
           flushQueued();
         }
@@ -159,6 +169,9 @@ export function useSketchStream({ category, style }: UseSketchStreamOptions) {
         setLoading(false);
         isGeneratingRef.current = false;
         setStatusMessage(data.message ?? "Đã huỷ");
+        if (queuedSketchRef.current) {
+          flushQueued();
+        }
         return;
       }
     };
@@ -173,28 +186,50 @@ export function useSketchStream({ category, style }: UseSketchStreamOptions) {
     ws.onerror = () => {
       setStatusMessage("Lỗi kết nối WebSocket");
     };
-  }, [flushQueued]);
+  }, [flushQueued, idleStatus]);
 
-  const updateSketch = useCallback((sketch: string | null) => {
-    latestSketchRef.current = sketch;
-    setHasSketch(sketch !== null);
-
-    if (sketch === null) {
-      queuedSketchRef.current = null;
-      setImageSrc(null);
-      setLoading(false);
-      setStep(undefined);
-      isGeneratingRef.current = false;
-      setStatusMessage("Vẽ sketch rồi nhấn Tạo ảnh");
-      return;
-    }
-
-    if (!isGeneratingRef.current) {
-      setStatusMessage("Sẵn sàng — nhấn Tạo ảnh");
+  const clearLiveTimer = useCallback(() => {
+    if (liveTimerRef.current !== null) {
+      window.clearTimeout(liveTimerRef.current);
+      liveTimerRef.current = null;
     }
   }, []);
 
+  const updateSketch = useCallback(
+    (sketch: string | null) => {
+      latestSketchRef.current = sketch;
+      setHasSketch(sketch !== null);
+      clearLiveTimer();
+
+      if (sketch === null) {
+        queuedSketchRef.current = null;
+        setImageSrc(null);
+        setLoading(false);
+        setStep(undefined);
+        isGeneratingRef.current = false;
+        setStatusMessage(idleStatus(false));
+        return;
+      }
+
+      if (liveModeRef.current) {
+        setStatusMessage("Live — đang chờ nét vẽ ổn định...");
+        liveTimerRef.current = window.setTimeout(() => {
+          liveTimerRef.current = null;
+          if (!latestSketchRef.current || !liveModeRef.current) return;
+          sendGenerate(latestSketchRef.current);
+        }, LIVE_DEBOUNCE_MS);
+        return;
+      }
+
+      if (!isGeneratingRef.current) {
+        setStatusMessage(idleStatus(true));
+      }
+    },
+    [clearLiveTimer, idleStatus, sendGenerate]
+  );
+
   const generate = useCallback(() => {
+    clearLiveTimer();
     const sketch = latestSketchRef.current;
     if (!sketch) {
       setStatusMessage("Hãy vẽ sketch trước");
@@ -210,7 +245,17 @@ export function useSketchStream({ category, style }: UseSketchStreamOptions) {
     }
 
     sendGenerate(sketch);
-  }, [connect, sendGenerate]);
+  }, [clearLiveTimer, connect, sendGenerate]);
+
+  useEffect(() => {
+    if (!isGeneratingRef.current) {
+      setStatusMessage(idleStatus(Boolean(latestSketchRef.current)));
+    }
+    if (!liveMode) {
+      clearLiveTimer();
+      queuedSketchRef.current = null;
+    }
+  }, [liveMode, idleStatus, clearLiveTimer]);
 
   useEffect(() => {
     fetchHealth();
@@ -218,10 +263,11 @@ export function useSketchStream({ category, style }: UseSketchStreamOptions) {
 
     return () => {
       intentionalCloseRef.current = true;
+      clearLiveTimer();
       if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
       wsRef.current?.close();
     };
-  }, [connect, fetchHealth]);
+  }, [connect, fetchHealth, clearLiveTimer]);
 
   return {
     health,

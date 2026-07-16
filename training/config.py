@@ -27,7 +27,7 @@ class TrainConfig:
         "to_out.0",
     )
     lora_learning_rate: float = 1e-4
-    lora_train_steps: int = 8000
+    lora_train_steps: int = 10000
     lora_batch_size: int = 2
     lora_gradient_accumulation: int = 4
 
