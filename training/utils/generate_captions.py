@@ -47,7 +47,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--save_txt",
         action="store_true",
-        help="If set, also saves individual .txt caption files inside data/png/captions/ folder."
+        help="If set, also saves individual .txt caption files inside captions folder."
+    )
+    parser.add_argument(
+        "--txt_out_dir",
+        type=str,
+        default="",
+        help="Directory to save individual .txt caption files (defaults to photos_dir.parent / 'captions', falling back to ./captions if read-only)."
     )
     parser.add_argument(
         "--max_new_tokens",
@@ -106,7 +112,17 @@ def main() -> None:
         except Exception:
             captions_dict = {}
 
-    txt_out_dir = photos_dir.parent / "captions"
+    if args.txt_out_dir:
+        txt_out_dir = Path(args.txt_out_dir)
+    else:
+        # Fall back to local ./captions if photos_dir is in a read-only environment like Kaggle input
+        parent_dir = photos_dir.parent
+        if "kaggle/input" in str(parent_dir).lower() or "/input" in str(parent_dir).lower():
+            txt_out_dir = Path("./captions")
+            print(f"[!] Warning: photos_dir is in a read-only directory. Saving txt captions to local '{txt_out_dir}'", flush=True)
+        else:
+            txt_out_dir = parent_dir / "captions"
+
     if args.save_txt:
         txt_out_dir.mkdir(parents=True, exist_ok=True)
 

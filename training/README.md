@@ -2,102 +2,88 @@
 
 Train a **FashionSD-X style** model: SD 1.5 + fashion LoRA + sketch ControlNet.
 
-Dataset: [`Abhi5ingh/Dresscodepromptsketch`](https://huggingface.co/datasets/Abhi5ingh/Dresscodepromptsketch) (~48k rows: `image`, `text`, `sketch`).
+Dataset: local `data/png/{photos,sketches}` or [`Abhi5ingh/Dresscodepromptsketch`](https://huggingface.co/datasets/Abhi5ingh/Dresscodepromptsketch).
 
-## Architecture
+## Two training tracks
+
+| Track | Branch / path | What |
+|-------|---------------|------|
+| **Main** | `main` → `train_controlnet.py` | Fine-tune [`lllyasviel/sd-controlnet-scribble`](https://huggingface.co/lllyasviel/sd-controlnet-scribble) |
+| **Side** | git branch `experiment/pix2pix` | Classic Pix2Pix (from [old project](https://github.com/lqb464/Sketch-to-Image-by-Pix2Pix)) |
+
+Stage 1 (LoRA) and stage 2 (ControlNet) are **independent**. You can train stage 2 first without LoRA.
+
+## Architecture (main track)
 
 ```
-Stage 1 — train_lora.py
-  Dress Code (image + caption) → LoRA on SD 1.5 UNet
-  Output: outputs/lora/pytorch_lora_weights.safetensors
+Stage 1 — train_lora.py   (optional, can run later)
+  image + caption → LoRA on SD 1.5 UNet
+  Output: outputs/lora/
 
-Stage 2 — train_controlnet.py
-  Dress Code (sketch + caption → image) → ControlNet
-  UNet frozen + fused with stage-1 LoRA
+Stage 2 — train_controlnet.py   (can run first)
+  Fine-tune pretrained scribble ControlNet on sketch + caption → image
+  UNet frozen (base SD, or + fused LoRA if --lora_path given)
   Output: outputs/controlnet/
 
-Inference (backend)
-  sketch (canvas → edge) + text → SD 1.5 + LoRA + ControlNet → garment photo
+Inference
+  sketch + text → SD 1.5 (+ optional LoRA) + ControlNet → garment photo
 ```
 
-## Local smoke test (CPU/GPU)
+## Train stage 2 first (recommended)
 
 ```bash
 cd training
 pip install -r requirements.txt
 
-# Quick test (~2000 samples, fewer steps)
-python train_lora.py --output_dir outputs --max_train_samples 500 --lora_train_steps 100
-python train_controlnet.py --output_dir outputs --lora_path outputs/lora --max_train_samples 500 --controlnet_train_steps 100
+# Fine-tune scribble ControlNet — no LoRA required
+python train_controlnet.py --output_dir outputs
+
+# Smoke test
+python train_controlnet.py --output_dir outputs --max_train_samples 500 --controlnet_train_steps 100
 ```
 
-## Kaggle (recommended)
+Optional later:
 
-### 1. Setup notebook
-
-- **Accelerator:** GPU T4 x2 (or P100)
-- **Internet:** ON (download SD 1.5 + dataset from HuggingFace)
-- Upload this repo as Kaggle Dataset, or clone in notebook:
-
-```python
-!git clone https://github.com/YOUR_USER/Sketch2Clothes.git
-%cd Sketch2Clothes/training
-!pip install -q -r requirements.txt
+```bash
+python train_lora.py --output_dir outputs
+# Re-run stage 2 with LoRA fused into frozen UNet
+python train_controlnet.py --output_dir outputs --lora_path outputs/lora
 ```
 
-### 2. Full training
+Legacy (train ControlNet from scratch — not recommended):
+
+```bash
+python train_controlnet.py --output_dir outputs --init_from_unet
+```
+
+## Kaggle
 
 ```python
 import os
 os.environ["OUTPUT_DIR"] = "/kaggle/working/outputs"
-# Optional smoke test first:
+os.environ["STAGE"] = "controlnet"   # or "lora" / "all"
 # os.environ["MAX_TRAIN_SAMPLES"] = "2000"
-
-!python kaggle/train_all.py
+!python train_all.py
 ```
 
-Stages run sequentially (~4–8h on T4 for default steps).
-
-### 3. Download artifacts
-
-After run, download from **Output**:
-
-| Path | Use |
-|------|-----|
-| `outputs/lora/` | Fashion LoRA weights |
-| `outputs/controlnet/` | Sketch ControlNet |
-| `outputs/export/sample.jpg` | Sanity-check image |
-
-Upload as Kaggle Dataset for reuse, or copy to `backend/models/`.
-
-### 4. Run only one stage
-
-```python
-os.environ["STAGE"] = "lora"        # or "controlnet"
-os.environ["LORA_PATH"] = "/kaggle/input/your-lora-dataset/lora"
-!python kaggle/train_all.py
-```
+`train_all.py` only passes `--lora_path` if that folder exists.
 
 ## Default hyperparameters
 
-| Param | LoRA | ControlNet |
-|-------|------|------------|
+| Param | LoRA | ControlNet (fine-tune) |
+|-------|------|------------------------|
+| Init | — | `lllyasviel/sd-controlnet-scribble` |
 | Steps | 8000 | 6000 |
 | Batch | 2 | 1 |
 | Grad accum | 4 | 8 |
 | LR | 1e-4 | 1e-5 |
 | Resolution | 512 | 512 |
-| Rank | 64 | — |
 
-Override via CLI, e.g. `--lora_train_steps 12000`.
-
-## Connect trained model to backend
-
-Copy weights to `backend/models/`:
+## Connect to backend
 
 ```
 backend/models/
-├── lora/pytorch_lora_weights.safetensors
+├── lora/pytorch_lora_weights.safetensors   # optional
 └── controlnet/   (config.json, diffusion_pytorch_model.safetensors, ...)
 ```
 
@@ -106,26 +92,28 @@ cd backend
 $env:CONTROLNET_MODEL_ID="./models/controlnet"
 $env:FASHION_LORA_PATH="./models/lora"
 $env:USE_LCM="false"
-$env:SKETCH_PREPROCESS="adaptive"
 uvicorn main:app --reload --host 127.0.0.1 --port 8001
 ```
 
-## Train lại sau này
+## Pix2Pix side track
 
-1. Thu sketch từ app → thêm vào dataset riêng
-2. Fine-tune LoRA thêm vài epoch trên data mới
-3. Fine-tune ControlNet trên sketch thật từ canvas (quan trọng nhất)
-4. (Nâng cao) TexControl stage-2 texture refinement với ControlNet ip2p
+```bash
+git checkout experiment/pix2pix
+cd training/pix2pix
+python train_pix2pix.py --help
+```
+
+See `training/pix2pix/README.md` on that branch.
 
 ## File map
 
 ```
 training/
-├── config.py              # Hyperparameters
-├── train_lora.py          # Stage 1
-├── train_controlnet.py    # Stage 2
-├── train_all.py           # Kaggle orchestrator
+├── config.py
+├── train_lora.py          # Stage 1 (optional)
+├── train_controlnet.py    # Stage 2 main — fine-tune scribble
+├── train_all.py
 └── utils/
     ├── dataset.py
-    └── photos_to_sketches.py  # Convert photo dataset to sketches
+    └── photos_to_sketches.py
 ```

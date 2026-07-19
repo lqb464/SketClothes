@@ -23,6 +23,7 @@ backend/models/controlnet/
 
 # DATASET
 training/data/
+training/checkpoints/
 
 # IDE / OS
 .ipynb_checkpoints/

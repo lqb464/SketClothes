@@ -32,11 +32,16 @@ class TrainConfig:
     lora_gradient_accumulation: int = 4
 
     # ControlNet (stage 2) — sketch + text → garment image
+    # Fine-tune pretrained scribble ControlNet (NOT from_unet scratch).
+    controlnet_model_id: str = "lllyasviel/sd-controlnet-scribble"
+    controlnet_init_from_unet: bool = False  # True = train from scratch (legacy)
     controlnet_learning_rate: float = 1e-5
     controlnet_train_steps: int = 6000
     controlnet_batch_size: int = 1
     controlnet_gradient_accumulation: int = 8
     controlnet_conditioning_dropout: float = 0.05
+    # Stage 1 LoRA is optional for stage 2 — omit --lora_path to freeze base UNet only.
+
 
     # Shared
     mixed_precision: str = "fp16"
