@@ -48,7 +48,14 @@ class Pix2PixPairDataset(Dataset):
         self.data = hf_dataset
         self.resolution = resolution
         self.random_flip = random_flip
-        self.resize = transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BILINEAR)
+        # Resize(int) keeps aspect ratio; CenterCrop makes every sample resolution×resolution
+        # so DataLoader can stack a batch (non-square photos otherwise yield uneven H/W).
+        self.resize_crop = transforms.Compose(
+            [
+                transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+                transforms.CenterCrop(resolution),
+            ]
+        )
         self.to_tensor = transforms.Compose(
             [
                 transforms.ToTensor(),
@@ -61,8 +68,8 @@ class Pix2PixPairDataset(Dataset):
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         row = self.data[index]
-        photo = self.resize(row["image"].convert("RGB"))
-        sketch = self.resize(row["sketch"].convert("RGB"))
+        photo = self.resize_crop(row["image"].convert("RGB"))
+        sketch = self.resize_crop(row["sketch"].convert("RGB"))
 
         if self.random_flip and random.random() < 0.5:
             photo = transforms.functional.hflip(photo)
