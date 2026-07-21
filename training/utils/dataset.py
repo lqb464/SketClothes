@@ -10,7 +10,11 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from utils.caption_utils import DEFAULT_PRODUCT_CAPTION, normalize_product_caption
+from utils.caption_utils import (
+    DEFAULT_PRODUCT_CAPTION,
+    is_generic_product_caption,
+    normalize_product_caption,
+)
 
 
 def load_hf_dataset(
@@ -259,6 +263,7 @@ class DresscodeDataset(Dataset):
             "pixel_values": pixel_values,
             "input_ids": input_ids,
             "caption": caption,
+            "is_generic_caption": is_generic_product_caption(caption),
         }
 
         if self.with_control and sketch is not None:
@@ -271,6 +276,10 @@ def collate_lora(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
     return {
         "pixel_values": torch.stack([item["pixel_values"] for item in batch]),
         "input_ids": torch.stack([item["input_ids"] for item in batch]),
+        "is_generic_caption": torch.tensor(
+            [bool(item["is_generic_caption"]) for item in batch],
+            dtype=torch.bool,
+        ),
     }
 
 
@@ -279,6 +288,10 @@ def collate_controlnet(batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
         "pixel_values": torch.stack([item["pixel_values"] for item in batch]),
         "input_ids": torch.stack([item["input_ids"] for item in batch]),
         "control_values": torch.stack([item["control_values"] for item in batch]),
+        "is_generic_caption": torch.tensor(
+            [bool(item["is_generic_caption"]) for item in batch],
+            dtype=torch.bool,
+        ),
     }
 
 

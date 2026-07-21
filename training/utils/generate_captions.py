@@ -93,16 +93,6 @@ def _patch_florence_config_compat() -> None:
         pass
 
 
-def _fixed_florence_get_imports(filename):  # type: ignore[no-untyped-def]
-    """Strip flash_attn from Florence remote-code import checks (not needed for eager/sdpa)."""
-    from transformers.dynamic_module_utils import get_imports
-
-    imports = get_imports(filename)
-    if str(filename).endswith("modeling_florence2.py") and "flash_attn" in imports:
-        imports = [pkg for pkg in imports if pkg != "flash_attn"]
-    return imports
-
-
 def _load_florence(model_id: str, device: str):
     # Florence's modeling_florence2.py lists flash_attn as required even though eager/sdpa work.
     # Stubbing flash_attn breaks transformers package checks (__spec__ is None). Patch imports instead:
@@ -110,11 +100,19 @@ def _load_florence(model_id: str, device: str):
     from unittest.mock import patch
 
     from transformers import AutoModelForCausalLM, AutoProcessor
+    from transformers.dynamic_module_utils import get_imports as _orig_get_imports
+
+    def _fixed_get_imports(filename):  # type: ignore[no-untyped-def]
+        # Must call the unbound original — patching get_imports would recurse otherwise.
+        imports = _orig_get_imports(filename)
+        if str(filename).endswith("modeling_florence2.py") and "flash_attn" in imports:
+            imports = [pkg for pkg in imports if pkg != "flash_attn"]
+        return imports
 
     _patch_florence_config_compat()
     dtype = torch.float16 if device == "cuda" else torch.float32
 
-    with patch("transformers.dynamic_module_utils.get_imports", _fixed_florence_get_imports):
+    with patch("transformers.dynamic_module_utils.get_imports", _fixed_get_imports):
         processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
         last_err: Exception | None = None
         model = None

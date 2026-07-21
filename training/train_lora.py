@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora_train_steps", type=int, default=None)
     parser.add_argument("--lora_batch_size", type=int, default=None)
     parser.add_argument("--lora_gradient_accumulation", type=int, default=None)
+    parser.add_argument("--lora_text_dropout", type=float, default=None)
     parser.add_argument("--learning_rate", type=float, default=None)
     parser.add_argument("--max_train_samples", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
@@ -163,6 +164,23 @@ def main() -> None:
         unet, optimizer, train_loader, lr_scheduler
     )
 
+    # Empty prompt embedding for CFG / text dropout (cached once).
+    with torch.no_grad():
+        empty_ids = tokenizer(
+            "",
+            padding="max_length",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
+        ).input_ids.to(accelerator.device)
+        empty_embed = text_encoder(empty_ids)[0]  # [1, seq, dim]
+
+    if accelerator.is_main_process:
+        logger.info(
+            "LoRA text dropout=%.2f (generic/default captions always dropped)",
+            cfg.lora_text_dropout,
+        )
+
     global_step = 0
     progress = tqdm(
         range(num_update_steps),
@@ -191,6 +209,22 @@ def main() -> None:
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                     encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+                    # Generic captions → always unconditional; others → random dropout.
+                    drop = batch["is_generic_caption"].to(device=latents.device)
+                    if cfg.lora_text_dropout > 0:
+                        drop = drop | (
+                            torch.rand(bsz, device=latents.device) < cfg.lora_text_dropout
+                        )
+                    if drop.any():
+                        uncond = empty_embed.to(dtype=encoder_hidden_states.dtype).expand(
+                            bsz, -1, -1
+                        )
+                        encoder_hidden_states = torch.where(
+                            drop.view(bsz, 1, 1),
+                            uncond,
+                            encoder_hidden_states,
+                        )
+
                     model_pred = unet(
                         noisy_latents,
                         timesteps,

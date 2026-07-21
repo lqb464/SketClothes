@@ -31,6 +31,18 @@ DEFAULT_PRODUCT_CAPTION = (
 )
 
 
+def is_generic_product_caption(text: str | None) -> bool:
+    """True for fallback/default captions with no garment-specific detail."""
+    raw = (text or "").strip()
+    if not raw:
+        return True
+    if raw == DEFAULT_PRODUCT_CAPTION:
+        return True
+    # Degenerate → normalize yields DEFAULT; also catch pre-normalize filler.
+    lower = raw.lower()
+    return lower.startswith("a fashion garment,") and "product photo" in lower
+
+
 def is_degenerate_caption(text: str | None) -> bool:
     """Detect BLIP-style repetition loops / near-empty garbage captions."""
     raw = (text or "").strip()

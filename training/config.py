@@ -30,6 +30,8 @@ class TrainConfig:
     lora_train_steps: int = 10000
     lora_batch_size: int = 2
     lora_gradient_accumulation: int = 4
+    # Fraction of *specific* captions dropped to "" (CFG). Generic defaults always drop.
+    lora_text_dropout: float = 0.5
 
     # ControlNet (stage 2) — sketch + text → garment image
     # Fine-tune pretrained scribble ControlNet (NOT from_unet scratch).
